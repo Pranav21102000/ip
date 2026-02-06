@@ -1,0 +1,140 @@
+import json
+import time
+import re
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+# Termux-specific chromedriver path
+CHROMEDRIVER_PATH = "/data/data/com.termux/files/usr/bin/chromedriver"
+
+# Config
+LOGIN_URL = "https://securitytrails.com/app/auth/login"
+USERNAME = "xegowo4461@okcdeals.com"
+PASSWORD = "xegowo4461@okcdeals"
+COOKIES_FILE = "cookies.json"
+
+
+# -------------------- DRIVER SETUP --------------------
+def setup_driver():
+    options = Options()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--disable-extensions')
+    options.add_argument('--disable-infobars')
+    options.add_argument('--disable-notifications')
+    options.add_argument('--log-level=3')
+    options.add_argument('--blink-settings=imagesEnabled=false')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+
+    mobile_user_agent = (
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+    )
+    options.add_argument(f"user-agent={mobile_user_agent}")
+
+    # Enable performance logs
+    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+
+    service = Service(CHROMEDRIVER_PATH)
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.set_page_load_timeout(30)
+
+    return driver
+
+
+# -------------------- LOGIN FUNCTION --------------------
+def login(driver):
+    print("[*] Logging in...")
+    driver.get(LOGIN_URL)
+
+    try:
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "email")))
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "password")))
+        WebDriverWait(driver, 15).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+    except TimeoutException:
+        print("❌ Login form not loaded in time.")
+        return False
+
+    try:
+        driver.execute_script(f"""
+            document.getElementById('email').value = "{USERNAME}";
+            document.getElementById('password').value = "{PASSWORD}";
+            document.querySelector("button[type='submit']").click();
+        """)
+        time.sleep(4)
+        return True
+    except Exception as e:
+        print(f"❌ Login error: {e}")
+        return False
+
+
+# -------------------- SAVE COOKIES --------------------
+def extract_and_save_cookies(driver, file_path):
+    driver.get("https://securitytrails.com/app/dashboard")
+    time.sleep(2)
+    cookies = driver.get_cookies()
+    with open(file_path, "w") as f:
+        json.dump(cookies, f, indent=2)
+    print(f"✅ Cookies saved to {file_path}")
+
+
+# -------------------- EXTRACT HASHES --------------------
+HASH_REGEX = re.compile(r"/_next/static/([a-f0-9]{8})/")
+
+def print_hashes(driver):
+    logs = driver.get_log("performance")
+    found = set()
+
+    for entry in logs:
+        try:
+            msg = json.loads(entry["message"])["message"]
+            if msg["method"] == "Network.requestWillBeSent":
+                url = msg["params"]["request"]["url"]
+
+                match = HASH_REGEX.search(url)
+                if match:
+                    found.add(match.group(1))
+        except:
+            pass
+
+    if found:
+        print("\n🔍 HASHES FOUND:")
+        for h in found:
+            print(" →", h)
+    else:
+        print("❌ No _next/static hashes found.")
+
+
+# -------------------- MAIN --------------------
+def main():
+    driver = setup_driver()
+
+    try:
+        if login(driver):
+            print("[*] Loading dashboard...")
+            driver.get("https://securitytrails.com/app/dashboard")
+            time.sleep(7)
+
+            extract_and_save_cookies(driver, COOKIES_FILE)
+
+            print("[*] Extracting hash(es)...")
+            print_hashes(driver)
+
+            print("\n✅ Done!")
+
+        else:
+            print("❌ Login failed.")
+
+    finally:
+        driver.quit()
+
+
+if __name__ == "__main__":
+    main()
